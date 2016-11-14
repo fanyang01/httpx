@@ -7,8 +7,6 @@ import (
 	"strings"
 )
 
-//go:generate stringer -type=nodeType
-
 type nodeType int
 
 func (i nodeType) IsNotNil() bool { return i&nonNilNode != 0 }
@@ -22,12 +20,13 @@ const (
 )
 
 var nodeTypeName = map[nodeType]string{
+	0:                       "nil",
 	staticNode:              "nil|static",
-	capDirNode:              "nil|capture_dir",
-	capAllNode:              "nil|capture_all",
+	capDirNode:              "nil|cap_dir",
+	capAllNode:              "nil|cap_all",
 	nonNilNode | staticNode: "static",
-	nonNilNode | capDirNode: "capture_dir",
-	nonNilNode | capAllNode: "capture_all",
+	nonNilNode | capDirNode: "cap_dir",
+	nonNilNode | capAllNode: "cap_all",
 }
 
 func (i nodeType) String() string {
@@ -37,7 +36,7 @@ func (i nodeType) String() string {
 	return fmt.Sprintf("nodeType(%d)", i)
 }
 
-type Data struct {
+type Payload struct {
 	Handler http.Handler
 }
 
@@ -45,8 +44,9 @@ type Node struct {
 	path     string
 	typ      nodeType
 	index    string
+	capIdx   int // +1
 	children []Node
-	Data
+	Payload
 }
 
 type Tree struct {
@@ -60,53 +60,113 @@ func byteForIdx(dir string) byte {
 	return dir[0]
 }
 
+func newNode(path string) Node {
+	var node Node
+	node.setPath(path)
+	return node
+}
+
+func (node *Node) setPath(path string) *Node {
+	node.path = path
+	node.typ &= ^nodeTypeMask
+	switch byteForIdx(path) {
+	case ':':
+		node.typ |= capDirNode
+	case '*':
+		node.typ |= capAllNode
+	default:
+		node.typ |= staticNode
+	}
+	return node
+}
+
 func (node *Node) append(c Node) *Node {
 	node.children = append(node.children, c)
-	node.index = node.index + string(byteForIdx(c.path))
+	b := byteForIdx(c.path)
+	node.index = node.index + string(b)
+	if b == '*' || b == ':' {
+		node.capIdx = len(node.index)
+	}
 	return &node.children[len(node.children)-1]
 }
 
-func (t *Tree) Add(path string, v Data) (old Data, replace bool) {
+func (node *Node) appendSplit(path string) *Node {
+	ss := splitCompact(path)
+	for i, s := range ss {
+		child := newNode(s)
+		if child.typ&capAllNode != 0 && i != len(s)-1 {
+			panic(fmt.Errorf(
+				"radix: invalid pattern %q: capture-all can't be followed by path",
+				strings.Join(ss[i:], "/"),
+			))
+		}
+		node = node.append(child)
+	}
+	return node
+}
+
+func splitCompact(path string) (ss []string) {
+	ss = strings.Split(path, "/")
+	special := func(s string) bool {
+		switch byteForIdx(s) {
+		case ':', '*':
+			return true
+		}
+		return false
+	}
+
+	for i := 0; i < len(ss)-1; {
+		if !special(ss[i]) && !special(ss[i+1]) {
+			ss[i+1] = strings.Join(ss[i:i+2], "/")
+			copy(ss[i:], ss[i+1:])
+			ss = ss[:len(ss)-1]
+			continue
+		}
+		i++
+	}
+	return ss
+}
+
+func (t *Tree) Add(path string, v Payload) (old Payload, replace bool) {
 	ss := strings.Split(path, "/")
 	return t.root.insert(ss, v)
 }
 
-func commonDirPrefix(p1, p2 []string) (i int) {
+func commonPrefix(p1, p2 []string) (i int) {
 	for i = 0; len(p1) > 0 && len(p2) > 0 && p1[0] == p2[0]; i++ {
 		p1, p2 = p1[1:], p2[1:]
 	}
 	return i
 }
 
-func (node *Node) replace(v Data) (old Data, replace bool) {
-	old, replace = node.Data, node.typ.IsNotNil()
-	node.Data = v
-	node.typ = staticNode | nonNilNode
+func (node *Node) replace(v Payload) (old Payload, replace bool) {
+	old, replace = node.Payload, node.typ.IsNotNil()
+	node.Payload = v
+	node.setPath(node.path) // For root node
+	node.typ |= nonNilNode
 	return old, replace
 }
 
 // Invariant: strings.SplitN(node.dir, "/", 2)[0] == newpath[0]
-func (node *Node) insert(newpath []string, v Data) (old Data, replace bool) {
+func (node *Node) insert(newpath []string, v Payload) (old Payload, replace bool) {
 	var (
 		path = strings.Split(node.path, "/")
-		n    = commonDirPrefix(path, newpath)
+		n    = commonPrefix(path, newpath)
 	)
 	switch {
 	case n < len(path): // Split current node
 		l := len(strings.Join(newpath[:n], "/"))
 		child := *node
 		child.path = node.path[l+1:]
-		*node = Node{
-			path: node.path[:l],
-		}
+		*node = newNode(node.path[:l])
 		node.append(child)
 
 		if n == len(newpath) {
 			return node.replace(v)
 		}
-		return node.append(Node{
-			path: strings.Join(newpath[n:], "/"),
-		}).replace(v)
+		return node.appendSplit(
+			strings.Join(newpath[n:], "/"),
+		).replace(v)
 
 	case n == len(newpath): // Match current node
 		return node.replace(v)
@@ -124,13 +184,26 @@ func (node *Node) insert(newpath []string, v Data) (old Data, replace bool) {
 		if next := &children[i]; strings.SplitN(next.path, "/", 2)[0] == dir {
 			return next.insert(newpath[n:], v)
 		}
+		if b == ':' || b == '*' {
+			panic(fmt.Errorf(
+				"radix: conflict parameter name: old=%q, new=%q",
+				children[i].path, dir,
+			))
+		}
 		index, children = index[i+1:], children[i+1:]
 	}
 
+	if i = strings.IndexAny(node.index, ":*"); (b == ':' || b == '*') && i >= 0 {
+		panic(fmt.Errorf(
+			"radix: conflict parameter type: old=%q, new=%q",
+			node.children[i].path, dir,
+		))
+	}
+
 	// Failed, append to the child list of current node
-	return node.append(Node{
-		path: strings.Join(newpath[n:], "/"),
-	}).replace(v)
+	return node.appendSplit(
+		strings.Join(newpath[n:], "/"),
+	).replace(v)
 }
 
 func (t *Tree) Lookup(path string) *Node {
@@ -171,6 +244,24 @@ OUTER:
 			}
 			index, children = index[i+1:], children[i+1:]
 		}
+
+		if i = node.capIdx - 1; i >= 0 {
+			switch node.index[i] {
+			case ':':
+				pos := strings.IndexByte(path, '/')
+				if pos < 0 {
+					pos = len(path)
+				}
+				path = path[pos:]
+				node = &node.children[i]
+				continue OUTER
+			case '*':
+				path = path[len(path):]
+				node = &node.children[i]
+				continue OUTER
+			}
+		}
+
 		return nil
 	}
 	return node

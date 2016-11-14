@@ -11,7 +11,7 @@ type I int
 func (I) ServeHTTP(_ http.ResponseWriter, _ *http.Request) {}
 
 func (t *Tree) _add(path string, v http.Handler) (ov http.Handler, replace bool) {
-	old, replace := t.Add(path, Data{v})
+	old, replace := t.Add(path, Payload{v})
 	return old.Handler, replace
 }
 

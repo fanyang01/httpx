@@ -4,10 +4,16 @@ package radix
 
 import "strings"
 
-func (node *Node) insert_v0(ss []string, v Data) (old Data, replace bool) {
+func (node *Node) append_v0(c Node) *Node {
+	node.children = append(node.children, c)
+	node.index = node.index + string(byteForIdx(c.path))
+	return &node.children[len(node.children)-1]
+}
+
+func (node *Node) insert_v0(ss []string, v Payload) (old Payload, replace bool) {
 	if len(ss) == 0 {
-		old, replace = node.Data, node.typ.IsNotNil()
-		node.Data = v
+		old, replace = node.Payload, node.typ.IsNotNil()
+		node.Payload = v
 		node.typ = staticNode | nonNilNode
 		return old, replace
 	}
@@ -20,15 +26,15 @@ func (node *Node) insert_v0(ss []string, v Data) (old Data, replace bool) {
 	)
 	for ; i >= 0; i = strings.IndexByte(index, b) {
 		if next := &children[i]; next.path == dir {
-			return next.insert(ss[1:], v)
+			return next.insert_v0(ss[1:], v)
 		}
 		index, children = index[i+1:], children[i+1:]
 	}
-	next := node.append(Node{
+	next := node.append_v0(Node{
 		path: dir,
 		typ:  staticNode,
 	})
-	return next.insert(ss[1:], v)
+	return next.insert_v0(ss[1:], v)
 }
 
 func (t *Tree) lookup_v0(path string) *Node {
@@ -64,10 +70,10 @@ OUTER:
 }
 
 // Invariant: strings.SplitN(node.dir, "/", 2)[0] == newpath[0]
-func (node *Node) insert_v1(newpath []string, v Data) (old Data, replace bool) {
+func (node *Node) insert_v1(newpath []string, v Payload) (old Payload, replace bool) {
 	var (
 		path = strings.Split(node.path, "/")
-		n    = commonDirPrefix(path, newpath)
+		n    = commonPrefix(path, newpath)
 	)
 	switch {
 	case n < len(path): // Split current node
@@ -76,13 +82,14 @@ func (node *Node) insert_v1(newpath []string, v Data) (old Data, replace bool) {
 		child.path = node.path[l+1:]
 		*node = Node{
 			path: node.path[:l],
+			typ:  staticNode,
 		}
-		node.append(child)
+		node.append_v0(child)
 
 		if n == len(newpath) {
 			return node.replace(v)
 		}
-		return node.append(Node{
+		return node.append_v0(Node{
 			path: strings.Join(newpath[n:], "/"),
 		}).replace(v)
 
@@ -106,7 +113,7 @@ func (node *Node) insert_v1(newpath []string, v Data) (old Data, replace bool) {
 	}
 
 	// Failed, append to the child list of current node
-	return node.append(Node{
+	return node.append_v0(Node{
 		path: strings.Join(newpath[n:], "/"),
 	}).replace(v)
 }
