@@ -14,11 +14,11 @@ const (
 	HeaderWWWAuthenticate    = "WWW-Authenticate"
 )
 
-type contextKey int
+type contextKey struct{ int }
 
-const (
-	UserContextKey      = contextKey(0)
-	ProxyUserContextKey = contextKey(1)
+var (
+	UserContextKey      = &contextKey{0}
+	ProxyUserContextKey = &contextKey{1}
 )
 
 type Config struct {
@@ -26,7 +26,7 @@ type Config struct {
 	Realm string
 }
 
-func auth(config *Config, chdr, shdr string, code int, ck contextKey) func(http.Handler) http.Handler {
+func auth(config *Config, chdr, shdr string, code int, ck *contextKey) func(http.Handler) http.Handler {
 	if config == nil {
 		panic("basicauth: the config parameter can't be nil")
 	}
@@ -43,9 +43,7 @@ func auth(config *Config, chdr, shdr string, code int, ck contextKey) func(http.
 			}
 
 			ctx := context.WithValue(req.Context(), ck, username)
-			req.WithContext(ctx)
-
-			next.ServeHTTP(rw, req)
+			next.ServeHTTP(rw, req.WithContext(ctx))
 			return
 		})
 	}

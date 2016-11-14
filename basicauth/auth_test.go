@@ -65,7 +65,7 @@ func TestAuth(t *testing.T) {
 		},
 	}
 	handler := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(rw, "hello")
+		fmt.Fprintln(rw, r.Context().Value(UserContextKey))
 	})
 	server := httptest.NewServer(Auth(config)(handler))
 	defer server.Close()
@@ -105,7 +105,7 @@ func TestAuth(t *testing.T) {
 				}
 			case 200:
 				b, _ := ioutil.ReadAll(resp.Body)
-				if got, want := string(b), "hello\n"; got != want {
+				if got, want := string(b), tt.user+"\n"; got != want {
 					t.Errorf("got body = %v, want %v", got, want)
 				}
 			}
@@ -127,7 +127,9 @@ func TestAuthProxy(t *testing.T) {
 			return username == "foo" && password == "bar"
 		},
 	}
-	proxy := httptest.NewServer(AuthProxy(config)(httputil.NewSingleHostReverseProxy(srvURL)))
+	proxy := httptest.NewServer(
+		AuthProxy(config)(httputil.NewSingleHostReverseProxy(srvURL)),
+	)
 	defer proxy.Close()
 	proxyURL, _ := url.Parse(proxy.URL)
 	client := &http.Client{
