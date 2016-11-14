@@ -6,7 +6,7 @@ import "strings"
 
 func (node *Node) append_v0(c Node) *Node {
 	node.children = append(node.children, c)
-	node.index = node.index + string(byteForIdx(c.path))
+	node.index = node.index + string(firstbyte(c.path))
 	return &node.children[len(node.children)-1]
 }
 
@@ -19,7 +19,7 @@ func (node *Node) insert_v0(ss []string, v Payload) (old Payload, replace bool) 
 	}
 	var (
 		dir      = ss[0]
-		b        = byteForIdx(dir)
+		b        = firstbyte(dir)
 		index    = node.index
 		i        = strings.IndexByte(index, b)
 		children = node.children
@@ -50,7 +50,7 @@ OUTER:
 
 		var (
 			dir      = path[:pos]
-			b        = byteForIdx(dir)
+			b        = firstbyte(dir)
 			index    = node.index
 			i        = strings.IndexByte(index, b)
 			children = node.children
@@ -100,7 +100,7 @@ func (node *Node) insert_v1(newpath []string, v Payload) (old Payload, replace b
 	// Try to go deeper
 	var (
 		dir      = newpath[n]
-		b        = byteForIdx(dir)
+		b        = firstbyte(dir)
 		index    = node.index
 		i        = strings.IndexByte(index, b)
 		children = node.children
@@ -150,7 +150,7 @@ OUTER:
 		}
 
 		var (
-			b        = byteForIdx(dir)
+			b        = firstbyte(dir)
 			index    = node.index
 			i        = strings.IndexByte(index, b)
 			children = node.children

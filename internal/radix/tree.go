@@ -14,18 +14,18 @@ func (i nodeType) IsNotNil() bool { return i&nonNilNode != 0 }
 const (
 	nonNilNode nodeType = 1 << iota
 	staticNode
-	capDirNode
+	capOneNode
 	capAllNode
-	nodeTypeMask = staticNode | capDirNode | capAllNode
+	nodeTypeMask = staticNode | capOneNode | capAllNode
 )
 
 var nodeTypeName = map[nodeType]string{
 	0:                       "nil",
 	staticNode:              "nil|static",
-	capDirNode:              "nil|cap_dir",
+	capOneNode:              "nil|cap_one",
 	capAllNode:              "nil|cap_all",
 	nonNilNode | staticNode: "static",
-	nonNilNode | capDirNode: "cap_dir",
+	nonNilNode | capOneNode: "cap_one",
 	nonNilNode | capAllNode: "cap_all",
 }
 
@@ -44,7 +44,7 @@ type Node struct {
 	path     string
 	typ      nodeType
 	index    string
-	capIdx   int // +1
+	icap     int // index of the capture node(if exists) + 1
 	children []Node
 	Payload
 }
@@ -53,7 +53,7 @@ type Tree struct {
 	root Node
 }
 
-func byteForIdx(dir string) byte {
+func firstbyte(dir string) byte {
 	if dir == "" {
 		return '/'
 	}
@@ -69,9 +69,9 @@ func newNode(path string) Node {
 func (node *Node) setPath(path string) *Node {
 	node.path = path
 	node.typ &= ^nodeTypeMask
-	switch byteForIdx(path) {
+	switch firstbyte(path) {
 	case ':':
-		node.typ |= capDirNode
+		node.typ |= capOneNode
 	case '*':
 		node.typ |= capAllNode
 	default:
@@ -82,10 +82,10 @@ func (node *Node) setPath(path string) *Node {
 
 func (node *Node) append(c Node) *Node {
 	node.children = append(node.children, c)
-	b := byteForIdx(c.path)
+	b := firstbyte(c.path)
 	node.index = node.index + string(b)
 	if b == '*' || b == ':' {
-		node.capIdx = len(node.index)
+		node.icap = len(node.index)
 	}
 	return &node.children[len(node.children)-1]
 }
@@ -94,7 +94,7 @@ func (node *Node) appendSplit(path string) *Node {
 	ss := splitCompact(path)
 	for i, s := range ss {
 		child := newNode(s)
-		if child.typ&capAllNode != 0 && i != len(s)-1 {
+		if child.typ&capAllNode != 0 && i != len(ss)-1 {
 			panic(fmt.Errorf(
 				"radix: invalid pattern %q: capture-all can't be followed by path",
 				strings.Join(ss[i:], "/"),
@@ -108,7 +108,7 @@ func (node *Node) appendSplit(path string) *Node {
 func splitCompact(path string) (ss []string) {
 	ss = strings.Split(path, "/")
 	special := func(s string) bool {
-		switch byteForIdx(s) {
+		switch firstbyte(s) {
 		case ':', '*':
 			return true
 		}
@@ -175,7 +175,7 @@ func (node *Node) insert(newpath []string, v Payload) (old Payload, replace bool
 	// Try to go deeper
 	var (
 		dir      = newpath[n]
-		b        = byteForIdx(dir)
+		b        = firstbyte(dir)
 		index    = node.index
 		i        = strings.IndexByte(index, b)
 		children = node.children
@@ -193,10 +193,10 @@ func (node *Node) insert(newpath []string, v Payload) (old Payload, replace bool
 		index, children = index[i+1:], children[i+1:]
 	}
 
-	if i = strings.IndexAny(node.index, ":*"); (b == ':' || b == '*') && i >= 0 {
+	if (b == ':' || b == '*') && node.icap > 0 {
 		panic(fmt.Errorf(
 			"radix: conflict parameter type: old=%q, new=%q",
-			node.children[i].path, dir,
+			node.children[node.icap-1].path, dir,
 		))
 	}
 
@@ -215,7 +215,7 @@ OUTER:
 		path = path[1:]
 
 		var (
-			b        = byteForIdx(path)
+			b        = firstbyte(path)
 			index    = node.index
 			i        = strings.IndexByte(index, b)
 			children = node.children
@@ -245,7 +245,7 @@ OUTER:
 			index, children = index[i+1:], children[i+1:]
 		}
 
-		if i = node.capIdx - 1; i >= 0 {
+		if i = node.icap - 1; i >= 0 {
 			switch node.index[i] {
 			case ':':
 				pos := strings.IndexByte(path, '/')
@@ -292,6 +292,7 @@ func (t *Tree) String() string {
 		first, last bool
 		nextIsLast  bool
 		level       int
+		path        string
 	}
 	var (
 		f      func(*Node, int, []context)
@@ -313,7 +314,13 @@ func (t *Tree) String() string {
 		line.WriteTo(&result)
 		result.WriteByte('"')
 		result.WriteString(n.path)
-		result.WriteString(`"\n`)
+		result.WriteByte('"')
+		result.WriteString("\t")
+		for _, c := range ctx {
+			result.WriteByte('/')
+			result.WriteString(c.path)
+		}
+		result.WriteByte('\n')
 
 		for i := range n.children {
 			ctx = append(ctx, context{
@@ -321,6 +328,7 @@ func (t *Tree) String() string {
 				last:       i == len(n.children)-1,
 				nextIsLast: i == len(n.children)-2,
 				level:      level + 1,
+				path:       n.children[i].path,
 			})
 			f(&n.children[i], level+1, ctx)
 			ctx = ctx[:len(ctx)-1]

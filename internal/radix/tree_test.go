@@ -44,6 +44,10 @@ func TestTree_Add(t *testing.T) {
 		{args{"/pkg/nnnn", I(16)}, nil, false},
 		{args{"/pkg/nn", I(17)}, nil, false},
 		{args{"/pkg/nnn", I(18)}, I(15), true},
+		{args{"/pkg/:first/:second/*rest", I(19)}, nil, false},
+		{args{"/pkg/:first", I(20)}, nil, false},
+		{args{"/pkg/:first/:second", I(21)}, nil, false},
+		{args{"/pkg/:first/:second/*rest", I(22)}, I(19), true},
 	}
 	tree := &Tree{}
 	for _, tt := range tests {
@@ -85,11 +89,15 @@ func TestTree_Lookup(t *testing.T) {
 		{"/pkg/nnn", I(14)},
 		{"/pkg/nnnn", I(15)},
 		{"/pkg/nn", I(16)},
+		{"/pkg/:first/:second/*rest", I(17)},
+		{"/pkg/:first", I(18)},
+		{"/pkg/:first/:second", I(19)},
 	}
 	tree := &Tree{}
 	for _, pp := range paths {
 		tree._add(pp.path, pp.v)
 	}
+	fmt.Println(tree)
 
 	tests := []struct {
 		path      string
@@ -109,6 +117,13 @@ func TestTree_Lookup(t *testing.T) {
 		{"/pkg/nnn", I(14), true},
 		{"/pkg/nnnn", I(15), true},
 		{"/pkg/nn", I(16), true},
+
+		{"/pkg/1", I(18), true},
+		{"/pkg/1/", I(19), true},
+		{"/pkg/1/2", I(19), true},
+		{"/pkg/1/2/", I(17), true},
+		{"/pkg/1/2/3", I(17), true},
+		{"/pkg/1/2/3/4", I(17), true},
 	}
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
