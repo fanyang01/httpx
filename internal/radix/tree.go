@@ -21,12 +21,28 @@ const (
 	nodeTypeMask = staticNode | capDirNode | capAllNode
 )
 
+var nodeTypeName = map[nodeType]string{
+	staticNode:              "nil|static",
+	capDirNode:              "nil|capture_dir",
+	capAllNode:              "nil|capture_all",
+	nonNilNode | staticNode: "static",
+	nonNilNode | capDirNode: "capture_dir",
+	nonNilNode | capAllNode: "capture_all",
+}
+
+func (i nodeType) String() string {
+	if s := nodeTypeName[i]; s != "" {
+		return s
+	}
+	return fmt.Sprintf("nodeType(%d)", i)
+}
+
 type Data struct {
 	Handler http.Handler
 }
 
 type Node struct {
-	dir      string
+	path     string
 	typ      nodeType
 	index    string
 	children []Node
@@ -46,7 +62,7 @@ func byteForIdx(dir string) byte {
 
 func (node *Node) append(c Node) *Node {
 	node.children = append(node.children, c)
-	node.index = node.index + string(byteForIdx(c.dir))
+	node.index = node.index + string(byteForIdx(c.path))
 	return &node.children[len(node.children)-1]
 }
 
@@ -72,16 +88,16 @@ func (node *Node) replace(v Data) (old Data, replace bool) {
 // Invariant: strings.SplitN(node.dir, "/", 2)[0] == newpath[0]
 func (node *Node) insert(newpath []string, v Data) (old Data, replace bool) {
 	var (
-		path = strings.Split(node.dir, "/")
+		path = strings.Split(node.path, "/")
 		n    = commonDirPrefix(path, newpath)
 	)
 	switch {
 	case n < len(path): // Split current node
 		l := len(strings.Join(newpath[:n], "/"))
 		child := *node
-		child.dir = node.dir[l+1:]
+		child.path = node.path[l+1:]
 		*node = Node{
-			dir: node.dir[:l],
+			path: node.path[:l],
 		}
 		node.append(child)
 
@@ -89,7 +105,7 @@ func (node *Node) insert(newpath []string, v Data) (old Data, replace bool) {
 			return node.replace(v)
 		}
 		return node.append(Node{
-			dir: strings.Join(newpath[n:], "/"),
+			path: strings.Join(newpath[n:], "/"),
 		}).replace(v)
 
 	case n == len(newpath): // Match current node
@@ -105,7 +121,7 @@ func (node *Node) insert(newpath []string, v Data) (old Data, replace bool) {
 		children = node.children
 	)
 	for ; i >= 0; i = strings.IndexByte(index, b) {
-		if next := &children[i]; strings.SplitN(next.dir, "/", 2)[0] == dir {
+		if next := &children[i]; strings.SplitN(next.path, "/", 2)[0] == dir {
 			return next.insert(newpath[n:], v)
 		}
 		index, children = index[i+1:], children[i+1:]
@@ -113,75 +129,57 @@ func (node *Node) insert(newpath []string, v Data) (old Data, replace bool) {
 
 	// Failed, append to the child list of current node
 	return node.append(Node{
-		dir: strings.Join(newpath[n:], "/"),
+		path: strings.Join(newpath[n:], "/"),
 	}).replace(v)
 }
 
 func (t *Tree) Lookup(path string) *Node {
-	var (
-		node    = &t.root
-		delayed = false
-		np      = -1
-	)
+	node := &t.root
+
 OUTER:
-	for pos := 0; len(path) > 0; path = path[pos:] {
-		fmt.Println(node, delayed)
+	for len(path) > 0 {
+		// Invariant: path[0] = '/'
 		path = path[1:]
 
-		if pos = strings.IndexByte(path, '/'); pos < 0 {
-			pos = len(path)
-		}
-
-		dir := path[:pos]
-
-		switch {
-		case !delayed:
-			break
-		case !strings.HasPrefix(node.dir[np:], dir):
-			return nil
-		case len(node.dir[np:]) == len(dir):
-			delayed, np = false, -1
-			continue OUTER
-		case node.dir[np+len(dir)] == '/':
-			np += len(dir) + 1
-			continue OUTER
-		default:
-			return nil
-		}
-
 		var (
-			b        = byteForIdx(dir)
+			b        = byteForIdx(path)
 			index    = node.index
 			i        = strings.IndexByte(index, b)
 			children = node.children
 		)
 		for ; i >= 0; i = strings.IndexByte(index, b) {
-			if next := &children[i]; strings.HasPrefix(next.dir, dir) {
-				if len(next.dir) == len(dir) {
-					node = next
-					continue OUTER
-				}
-				if next.dir[len(dir)] == '/' {
-					node = next
-					delayed, np = true, len(dir)+1
-					continue OUTER
-				}
+			var (
+				child    = &children[i]
+				pos, min int
+			)
+			if min = len(child.path); min > len(path) {
+				min = len(path)
+			}
+			for ; pos < min && child.path[pos] == path[pos]; pos++ {
+			}
+			switch {
+			case pos < len(child.path): // Not match
+				break
+			case pos == len(path): // Match
+				return child
+			case path[pos] != '/': // Not match
+				break
+			default: // Go deeper
+				path = path[pos:]
+				node = child
+				continue OUTER
 			}
 			index, children = index[i+1:], children[i+1:]
 		}
-
 		return nil
 	}
-
-	fmt.Println(node)
-
 	return node
 }
 
 func (node *Node) String() string {
 	return fmt.Sprintf(
 		"Node{dir: %q, #child: %d, index: %q, type: %s}",
-		node.dir, len(node.children), string(node.index), node.typ,
+		node.path, len(node.children), string(node.index), node.typ,
 	)
 }
 
@@ -223,9 +221,8 @@ func (t *Tree) String() string {
 
 		line.WriteTo(&result)
 		result.WriteByte('"')
-		result.WriteString(n.dir)
-		result.WriteByte('"')
-		result.WriteByte('\n')
+		result.WriteString(n.path)
+		result.WriteString(`"\n`)
 
 		for i := range n.children {
 			ctx = append(ctx, context{
