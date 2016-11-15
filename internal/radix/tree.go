@@ -1,6 +1,7 @@
 package radix
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"net/http"
@@ -295,8 +296,11 @@ func (t *Tree) String() string {
 		path        string
 	}
 	var (
-		f      func(*Node, int, []context)
-		result bytes.Buffer
+		f           func(*Node, int, []context)
+		tree        bytes.Buffer
+		annotations []string
+		result      bytes.Buffer
+		maxlen      int
 	)
 	f = func(n *Node, level int, ctx []context) {
 		var line bytes.Buffer
@@ -310,17 +314,22 @@ func (t *Tree) String() string {
 				line.WriteString(strIF(c.level < level, edge, leaf))
 			}
 		}
-
-		line.WriteTo(&result)
-		result.WriteByte('"')
-		result.WriteString(n.path)
-		result.WriteByte('"')
-		result.WriteString("\t")
-		for _, c := range ctx {
-			result.WriteByte('/')
-			result.WriteString(c.path)
+		// line.WriteByte('"')
+		line.WriteString(strIF(len(n.path) > 0, n.path, "."))
+		// line.WriteByte('"')
+		if line.Len() > maxlen {
+			maxlen = line.Len()
 		}
-		result.WriteByte('\n')
+		line.WriteTo(&tree)
+		tree.WriteByte('\n')
+
+		path := ""
+		if n.typ&nonNilNode != 0 {
+			for _, c := range ctx {
+				path += "/" + c.path
+			}
+		}
+		annotations = append(annotations, path)
 
 		for i := range n.children {
 			ctx = append(ctx, context{
@@ -334,7 +343,106 @@ func (t *Tree) String() string {
 			ctx = ctx[:len(ctx)-1]
 		}
 	}
+
 	ctx := make([]context, 0, 8)
 	f(&t.root, 0, ctx)
+
+	scanner := bufio.NewScanner(&tree)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		result.Write(line)
+		for i := maxlen + 2 - len(line); i > 0; i-- {
+			result.WriteByte(' ')
+		}
+		result.WriteString(annotations[0])
+		annotations = annotations[1:]
+		result.WriteByte('\n')
+	}
 	return result.String()
+}
+
+func (t *Tree) Optimize() {
+	var depthfirst, breadthfirst func(*Node, func(*Node))
+
+	// NOTE: don't modify Node.children in function f.
+	depthfirst = func(n *Node, f func(*Node)) {
+		f(n)
+		for i := range n.children {
+			depthfirst(&n.children[i], f)
+		}
+	}
+	// Modifying node.children in function f is safe.
+	breadthfirst = func(n *Node, f func(*Node)) {
+		queue := make([]*Node, 0, 16)
+		queue = append(queue, n)
+		for len(queue) > 0 {
+			n, queue = queue[0], queue[1:]
+			f(n)
+			for i := range n.children {
+				queue = append(queue, &n.children[i])
+			}
+		}
+	}
+
+	// Move *param or :param to the end of children list
+	breadthfirst(&t.root, func(n *Node) {
+		if n.icap <= 0 {
+			return
+		}
+		i := n.icap - 1
+		child := n.children[i]
+		copy(n.children[i:], n.children[i+1:])
+		n.children = n.children[:len(n.children)-1]
+		n.children = append(n.children, child)
+		n.icap = len(n.children)
+		n.index = ""
+		for i := range n.children {
+			n.index += string(firstbyte(n.children[i].path))
+		}
+	})
+
+	// Count the number of nodes
+	var count int
+	depthfirst(&t.root, func(*Node) { count++ })
+
+	// Move all nodes but root to a continuous memory segment
+	nodes := make([]Node, 0, count-1)
+	breadthfirst(&t.root, func(n *Node) {
+		nodes = append(nodes, n.children...)
+	})
+	breadthfirst(&t.root, func(n *Node) {
+		n.children = nodes[:len(n.children)]
+		nodes = nodes[len(n.children):]
+	})
+	if len(nodes) != 0 {
+		panic("radix: optimization failed")
+	}
+
+	// Move all index string to a continuous memory segment
+	var buf bytes.Buffer
+	breadthfirst(&t.root, func(n *Node) {
+		buf.WriteString(n.index)
+	})
+	index := buf.String()
+	breadthfirst(&t.root, func(n *Node) {
+		n.index = index[:len(n.index)]
+		index = index[len(n.index):]
+	})
+	if len(index) != 0 {
+		panic("radix: optimization failed")
+	}
+
+	// Move all path string to a continuous memory segment (DFS)
+	buf.Reset()
+	depthfirst(&t.root, func(n *Node) {
+		buf.WriteString(n.path)
+	})
+	path := buf.String()
+	depthfirst(&t.root, func(n *Node) {
+		n.path = path[:len(n.path)]
+		path = path[len(n.path):]
+	})
+	if len(path) != 0 {
+		panic("radix: optimization failed")
+	}
 }

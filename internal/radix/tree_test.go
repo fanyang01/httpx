@@ -97,6 +97,7 @@ func TestTree_Lookup(t *testing.T) {
 	for _, pp := range paths {
 		tree._add(pp.path, pp.v)
 	}
+	tree.Optimize()
 	fmt.Println(tree)
 
 	tests := []struct {
