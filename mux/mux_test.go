@@ -1,7 +1,6 @@
 package mux
 
 import (
-	"fmt"
 	"math/rand"
 	"testing"
 
@@ -11,39 +10,29 @@ import (
 func TestNew(t *testing.T) {
 	mux := New()
 	_ = mux
-	f := func(s string, i int) byte {
-		b := byte(i)
-		b *= s[0]
-		b += s[1]
-		return b % 11
-	}
-OUTER:
-	for i := 0; i < 256; i++ {
-		M := map[byte]bool{}
-		for _, method := range METHODS {
-			key := f(method, i)
-			if M[key] {
-				continue OUTER
-			}
-			M[key] = true
-		}
-		fmt.Println(i)
-	}
 }
 
+/*
+
+BenchmarkMap/map-4         	10000000	       226 ns/op
+BenchmarkMap/hmap-4        	20000000	        81.8 ns/op
+BenchmarkMap/map-random-4  	20000000	        85.0 ns/op
+BenchmarkMap/hmap-random-4 	20000000	        58.1 ns/op
+
+*/
 func BenchmarkMap(b *testing.B) {
 	mux := New()
 	tree := &radix.Tree{}
 	M := map[string]*radix.Tree{
-		GET:     tree,
-		POST:    tree,
-		PUT:     tree,
-		HEAD:    tree,
-		DELETE:  tree,
-		CONNECT: tree,
-		OPTIONS: tree,
-		PATCH:   tree,
-		TRACE:   tree,
+		xGET:     tree,
+		xPOST:    tree,
+		xPUT:     tree,
+		xHEAD:    tree,
+		xDELETE:  tree,
+		xCONNECT: tree,
+		xOPTIONS: tree,
+		xPATCH:   tree,
+		xTRACE:   tree,
 	}
 	methods := []string{
 		"GET", "POST", "PUT", "HEAD", "DELETE", "CONNECT", "OPTIONS", "PATCH", "TRACE",

@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-type nodeType int
+type nodeType int32
 
 func (i nodeType) IsNotNil() bool { return i&nonNilNode != 0 }
 
@@ -43,9 +43,9 @@ type Payload struct {
 
 type Node struct {
 	path     string
-	typ      nodeType
 	index    string
-	icap     int // index of the capture node(if exists) + 1
+	typ      nodeType
+	icap     int32 // index of the capture node(if exists) + 1
 	children []Node
 	Payload
 }
@@ -86,7 +86,7 @@ func (node *Node) append(c Node) *Node {
 	b := firstbyte(c.path)
 	node.index = node.index + string(b)
 	if b == '*' || b == ':' {
-		node.icap = len(node.index)
+		node.icap = int32(len(node.index))
 	}
 	return &node.children[len(node.children)-1]
 }
@@ -246,19 +246,19 @@ OUTER:
 			index, children = index[i+1:], children[i+1:]
 		}
 
-		if i = node.icap - 1; i >= 0 {
-			switch node.index[i] {
+		if icap := node.icap - 1; icap >= 0 {
+			switch node.index[icap] {
 			case ':':
 				pos := strings.IndexByte(path, '/')
 				if pos < 0 {
 					pos = len(path)
 				}
 				path = path[pos:]
-				node = &node.children[i]
+				node = &node.children[icap]
 				continue OUTER
 			case '*':
 				path = path[len(path):]
-				node = &node.children[i]
+				node = &node.children[icap]
 				continue OUTER
 			}
 		}
@@ -394,7 +394,7 @@ func (t *Tree) Optimize() {
 		copy(n.children[i:], n.children[i+1:])
 		n.children = n.children[:len(n.children)-1]
 		n.children = append(n.children, child)
-		n.icap = len(n.children)
+		n.icap = int32(len(n.children))
 		n.index = ""
 		for i := range n.children {
 			n.index += string(firstbyte(n.children[i].path))
