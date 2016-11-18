@@ -1,4 +1,4 @@
-package mux
+package smux
 
 import "github.com/fanyang01/httpx/internal/radix"
 
@@ -45,20 +45,6 @@ var (
 		xCONNECT, xOPTIONS, xPATCH, xTRACE,
 	}
 )
-
-type Mux struct {
-	hmap   hmap
-	extend map[string]*radix.Tree
-}
-
-func New() *Mux {
-	mux := &Mux{}
-	mux.hmap.Add(
-		xGET, xPOST, xPUT, xHEAD, xDELETE,
-		xOPTIONS, xPATCH, xTRACE, xCONNECT,
-	)
-	return mux
-}
 
 func (mux *Mux) tree(method string) *radix.Tree {
 	if len(method) > 1 {

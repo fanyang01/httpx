@@ -1,4 +1,4 @@
-package mux
+package smux
 
 import (
 	"math/rand"
