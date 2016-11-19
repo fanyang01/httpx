@@ -19,8 +19,13 @@ func (mux *Mux) Group(prefix string) *Group {
 }
 
 type Middleware interface {
-	Name() string
 	Wrap(http.Handler) http.Handler
+}
+
+type MiddlewareFunc func(http.Handler) http.Handler
+
+func (f MiddlewareFunc) Wrap(h http.Handler) http.Handler {
+	return f(h)
 }
 
 func (g *Group) Use(middlewares ...Middleware) {
@@ -54,8 +59,8 @@ func (g *Group) add(method, pattern string, h http.Handler) {
 	g.mux.add(method, pattern, h)
 }
 
-func (g *Group) Handle(m Method, pattern string, h http.Handler) {
-	g.add(string(m), pattern, h)
+func (g *Group) Handle(method, pattern string, h http.Handler) {
+	g.add(method, pattern, h)
 }
 
 func (g *Group) GET(pattern string, h http.Handler) {
