@@ -2,7 +2,11 @@ package radix
 
 import (
 	"fmt"
+	"io/ioutil"
+	"math/rand"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,7 +55,7 @@ func TestTree_Add(t *testing.T) {
 	}
 	tree := &Tree{}
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%q=%d", tt.args.path, tt.args.v), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%q=%v", tt.args.path, tt.args.v), func(t *testing.T) {
 			gotOv, gotReplace := tree._add(tt.args.path, tt.args.v)
 			if gotOv != tt.wantOv {
 				t.Errorf("Tree.Add() gotOv = %v, want %v", gotOv, tt.wantOv)
@@ -101,9 +105,9 @@ func TestTree_Lookup(t *testing.T) {
 	fmt.Println(tree)
 
 	tests := []struct {
-		path      string
-		wantV     http.Handler
-		wantExact bool
+		path        string
+		wantV       http.Handler
+		wantReplace bool
 	}{
 		{"", I(0), true},
 		{"/", I(1), true},
@@ -128,13 +132,68 @@ func TestTree_Lookup(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
-			gotV, gotExact := tree._lookup(tt.path)
+			gotV, gotReplace := tree._lookup(tt.path)
 			if gotV != tt.wantV {
 				t.Errorf("Tree.Lookup() gotV = %v, want %v", gotV, tt.wantV)
 			}
-			if gotExact != tt.wantExact {
-				t.Errorf("Tree.Lookup() gotExact = %v, want %v", gotExact, tt.wantExact)
+			if gotReplace != tt.wantReplace {
+				t.Errorf("Tree.Lookup() gotReplace = %v, want %v", gotReplace, tt.wantReplace)
 			}
 		})
 	}
+}
+
+// BenchmarkLookup/normal-4         	20000000	        82.9 ns/op
+// BenchmarkLookup/optimized-4      	20000000	        82.1 ns/op
+func BenchmarkLookup(b *testing.B) {
+	tr := &Tree{}
+	tro := &Tree{}
+	ps := []string{
+		"",
+		"/src/",
+		"/src/*path",
+		"/pkg/",
+		"/pkg/*path",
+		"/doc/",
+		"/doc/:doc",
+		"/doc/articles/:article",
+		"/cmd/",
+		"/cmd/:cmd",
+		"/cmd/:cmd/",
+		"/blog/",
+		"/blog/:blog",
+		"/*",
+	}
+	f := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {})
+	for _, p := range ps {
+		tr.Add(p, Payload{f})
+		tro.Add(p, Payload{f})
+	}
+	tro.Optimize()
+
+	bt, err := ioutil.ReadFile(filepath.Join("testdata", "url.log"))
+	if err != nil {
+		b.Fatal(err)
+	}
+	urls := strings.Split(string(bt), "\n")
+	b.Run("normal", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			idx := rand.Intn(len(urls))
+			v := tr.Lookup(urls[idx])
+			if v != nil && v.Handler != nil {
+				v.Handler.ServeHTTP(nil, nil)
+			}
+		}
+	})
+	b.Run("optimized", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			idx := rand.Intn(len(urls))
+			v := tro.Lookup(urls[idx])
+			if v != nil && v.Handler != nil {
+				v.Handler.ServeHTTP(nil, nil)
+			}
+		}
+	})
 }
