@@ -10,10 +10,10 @@ func (node *Node) append_v0(c Node) *Node {
 	return &node.children[len(node.children)-1]
 }
 
-func (node *Node) insert_v0(ss []string, v Payload) (old Payload, replace bool) {
+func (node *Node) insert_v0(ss []string, v payload) (old payload, replace bool) {
 	if len(ss) == 0 {
-		old, replace = node.Payload, node.Payload.Handler != nil
-		node.Payload = v
+		old, replace = node.payload, node.payload.HandlerFunc != nil
+		node.payload = v
 		return old, replace
 	}
 	var (
@@ -67,8 +67,14 @@ OUTER:
 	return node
 }
 
+func (node *Node) replace_v1(v payload) (old payload, replace bool) {
+	old, replace = node.payload, node.HandlerFunc != nil
+	node.payload = v
+	return old, replace
+}
+
 // Invariant: strings.SplitN(node.dir, "/", 2)[0] == newpath[0]
-func (node *Node) insert_v1(newpath []string, v Payload) (old Payload, replace bool) {
+func (node *Node) insert_v1(newpath []string, v payload) (old payload, replace bool) {
 	var (
 		path = strings.Split(node.path, "/")
 		n    = commonPrefix(path, newpath)
@@ -84,14 +90,14 @@ func (node *Node) insert_v1(newpath []string, v Payload) (old Payload, replace b
 		node.append_v0(child)
 
 		if n == len(newpath) {
-			return node.replace(v)
+			return node.replace_v1(v)
 		}
 		return node.append_v0(Node{
 			path: strings.Join(newpath[n:], "/"),
-		}).replace(v)
+		}).replace_v1(v)
 
 	case n == len(newpath): // Match current node
-		return node.replace(v)
+		return node.replace_v1(v)
 	}
 
 	// Try to go deeper
@@ -104,7 +110,7 @@ func (node *Node) insert_v1(newpath []string, v Payload) (old Payload, replace b
 	)
 	for ; i >= 0; i = strings.IndexByte(index, b) {
 		if next := &children[i]; strings.SplitN(next.path, "/", 2)[0] == dir {
-			return next.insert(newpath[n:], v)
+			return next.insert_v1(newpath[n:], v)
 		}
 		index, children = index[i+1:], children[i+1:]
 	}
@@ -112,7 +118,7 @@ func (node *Node) insert_v1(newpath []string, v Payload) (old Payload, replace b
 	// Failed, append to the child list of current node
 	return node.append_v0(Node{
 		path: strings.Join(newpath[n:], "/"),
-	}).replace(v)
+	}).replace_v1(v)
 }
 
 func (t *Tree) lookup_v1(path string) *Node {

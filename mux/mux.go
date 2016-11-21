@@ -1,4 +1,4 @@
-package smux
+package mux
 
 import (
 	"fmt"
@@ -37,13 +37,18 @@ func New() *Mux {
 	return mux
 }
 
+func (mux *Mux) replace(node *radix.Node, f http.HandlerFunc) bool {
+	_, replaced := node.Replace(f)
+	return replaced
+}
+
 func (mux *Mux) add(method, pattern string, h http.Handler) {
 	t := mux.tree(method)
 	if t == nil {
 		t = &radix.Tree{}
 		mux.extend[method] = t
 	}
-	if _, replace := t.Add(pattern, radix.Payload{Handler: h}); replace {
+	if replaced := mux.replace(t.Add(pattern), h.ServeHTTP); replaced {
 		panic(fmt.Errorf("mux: can't override registered pattern %q", pattern))
 	}
 }
@@ -74,8 +79,8 @@ func (mux *Mux) DELETE(pattern string, h http.Handler) {
 
 func (mux *Mux) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if t := mux.tree(req.Method); t != nil {
-		if node := t.Lookup(req.URL.Path); node != nil && node.Handler != nil {
-			node.Handler.ServeHTTP(rw, req)
+		if node := t.Lookup(req.URL.Path); node != nil && node.HandlerFunc != nil {
+			node.HandlerFunc.ServeHTTP(rw, req)
 			return
 		}
 	}

@@ -9,144 +9,213 @@ import (
 	"testing"
 )
 
-type I int
+type rw struct{ s string }
 
-func (I) ServeHTTP(_ http.ResponseWriter, _ *http.Request) {}
+func (r *rw) Header() http.Header {
+	panic("not implemented")
+}
+func (r *rw) Write(b []byte) (int, error) {
+	r.s = string(b)
+	return len(b), nil
+}
+func (r *rw) WriteHeader(i int) {
+	panic("not implemented")
+}
 
-func (t *Tree) _add(path string, v http.Handler) (ov http.Handler, replace bool) {
-	old, replace := t.Add(path, Payload{v})
-	return old.Handler, replace
+func makeFunc(s string) http.HandlerFunc {
+	return http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.Write([]byte(s))
+	})
+}
+
+func fromFunc(f http.HandlerFunc) string {
+	rw := new(rw)
+	f(rw, nil)
+	return rw.s
+}
+
+func (t *Tree) _add(path string, v http.HandlerFunc) (ov http.HandlerFunc, replaced bool) {
+
+	return t.Add(path).Replace(v)
 }
 
 func TestTree_Add(t *testing.T) {
-	type args struct {
-		path string
-		v    http.Handler
-	}
 	tests := []struct {
-		args        args
-		wantOv      http.Handler
+		path        string
 		wantReplace bool
 	}{
-		{args{"", I(0)}, nil, false},
-		{args{"/", I(1)}, nil, false},
-		{args{"/pkg", I(2)}, nil, false},
-		{args{"/pkg/", I(3)}, nil, false},
-		{args{"/pkg/net", I(4)}, nil, false},
-		{args{"/doc/", I(5)}, nil, false},
-		{args{"/pkg/net/http/httputil", I(6)}, nil, false},
-		{args{"/pkg/net/http", I(7)}, nil, false},
-		{args{"/pkg/net/http", I(8)}, I(7), true},
-		{args{"/pkg/", I(9)}, I(3), true},
-		{args{"/pkg", I(10)}, I(2), true},
-		{args{"/", I(11)}, I(1), true},
-		{args{"", I(12)}, I(0), true},
-		{args{"/pkg/net/html", I(13)}, nil, false},
-		{args{"/pkg/net/http/httptest", I(14)}, nil, false},
-		{args{"/pkg/nnn", I(15)}, nil, false},
-		{args{"/pkg/nnnn", I(16)}, nil, false},
-		{args{"/pkg/nn", I(17)}, nil, false},
-		{args{"/pkg/nnn", I(18)}, I(15), true},
-		{args{"/pkg/:first/:second/*rest", I(19)}, nil, false},
-		{args{"/pkg/:first", I(20)}, nil, false},
-		{args{"/pkg/:first/:second", I(21)}, nil, false},
-		{args{"/pkg/:first/:second/*rest", I(22)}, I(19), true},
+		{"", false},
+		{"/", false},
+		{"/pkg", false},
+		{"/pkg/", false},
+		{"/pkg/net", false},
+		{"/doc/", false},
+		{"/pkg/net/http/httputil", false},
+		{"/pkg/net/http", false},
+		{"/pkg/net/http", true},
+		{"/pkg/", true},
+		{"/pkg", true},
+		{"/", true},
+		{"", true},
+		{"/pkg/net/html", false},
+		{"/pkg/net/http/httptest", false},
+		{"/pkg/nnn", false},
+		{"/pkg/nnnn", false},
+		{"/pkg/nn", false},
+		{"/pkg/nnn", true},
+		{"/pkg/:first/:second/*rest", false},
+		{"/pkg/:first", false},
+		{"/pkg/:first/:second", false},
+		{"/pkg/:first/:second/*rest", true},
 	}
 	tree := &Tree{}
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%q=%v", tt.args.path, tt.args.v), func(t *testing.T) {
-			gotOv, gotReplace := tree._add(tt.args.path, tt.args.v)
-			if gotOv != tt.wantOv {
-				t.Errorf("Tree.Add() gotOv = %v, want %v", gotOv, tt.wantOv)
-			}
+		t.Run(fmt.Sprintf("%q(%v)", tt.path, tt.wantReplace), func(t *testing.T) {
+			gotOv, gotReplace := tree._add(tt.path, makeFunc(tt.path))
 			if gotReplace != tt.wantReplace {
 				t.Errorf("Tree.Add() gotReplace = %v, want %v", gotReplace, tt.wantReplace)
 			}
+			if !gotReplace {
+				if gotOv != nil {
+					t.Errorf("Tree.Add() gotOv != nil")
+				}
+				return
+			}
+			if got := fromFunc(gotOv); got != tt.path {
+				t.Errorf("Tree.Add() got = %v, want %v", got, tt.path)
+			}
 		})
 	}
 }
 
-func (t *Tree) _lookup(path string) (v http.Handler, ok bool) {
+func (t *Tree) _lookup(path string) (v http.HandlerFunc, ok bool) {
 	node := t.Lookup(path)
-	if node == nil || node.Handler == nil {
+	if node == nil || node.HandlerFunc == nil {
 		return nil, false
 	}
-	return node.Handler, true
+	return node.HandlerFunc, true
 }
 
-func TestTree_Lookup(t *testing.T) {
+func testTree_Lookup(t *testing.T, optimize bool) {
 	paths := []struct {
 		path string
-		v    http.Handler
 	}{
-		{"", I(0)},
-		{"/", I(1)},
-		{"/pkg", I(2)},
-		{"/pkg/", I(3)},
-		{"/pkg/net", I(4)},
-		{"/doc/", I(5)},
-		{"/pkg/net/http/httputil", I(6)},
-		{"/pkg/net/http", I(7)},
-		{"/pkg/net/html", I(12)},
-		{"/pkg/net/http/httptest", I(13)},
-		{"/pkg/nnn", I(14)},
-		{"/pkg/nnnn", I(15)},
-		{"/pkg/nn", I(16)},
-		{"/pkg/:first/:second/*rest", I(17)},
-		{"/pkg/:first", I(18)},
-		{"/pkg/:first/:second", I(19)},
+		{""},
+		{"/"},
+		{"/pkg"},
+		{"/pkg/"},
+		{"/pkg/net"},
+		{"/doc/"},
+		{"/pkg/net/http/httputil"},
+		{"/pkg/net/http"},
+		{"/pkg/net/html"},
+		{"/pkg/net/http/httptest"},
+		{"/pkg/nnn"},
+		{"/pkg/nnnn"},
+		{"/pkg/nn"},
+		{"/pkg/:first/:second/*rest"},
+		{"/pkg/:first"},
+		{"/pkg/:first/:second"},
 	}
 	tree := &Tree{}
 	for _, pp := range paths {
-		tree._add(pp.path, pp.v)
+		tree._add(pp.path, makeFunc(pp.path))
 	}
-	tree.Optimize()
+	if optimize {
+		tree.Optimize()
+	}
 	fmt.Println(tree)
 
 	tests := []struct {
-		path        string
-		wantV       http.Handler
-		wantReplace bool
+		path   string
+		want   string
+		wantOK bool
 	}{
-		{"", I(0), true},
-		{"/", I(1), true},
-		{"/pkg", I(2), true},
-		{"/pkg/", I(3), true},
-		{"/pkg/net", I(4), true},
-		{"/doc/", I(5), true},
-		{"/pkg/net/http/httputil", I(6), true},
-		{"/pkg/net/http", I(7), true},
-		{"/pkg/net/html", I(12), true},
-		{"/pkg/net/http/httptest", I(13), true},
-		{"/pkg/nnn", I(14), true},
-		{"/pkg/nnnn", I(15), true},
-		{"/pkg/nn", I(16), true},
+		{"", "", true},
+		{"/", "/", true},
+		{"/pkg", "/pkg", true},
+		{"/pkg/", "/pkg/", true},
+		{"/pkg/net", "/pkg/net", true},
+		{"/doc/", "/doc/", true},
+		{"/pkg/net/http/httputil", "/pkg/net/http/httputil", true},
+		{"/pkg/net/http", "/pkg/net/http", true},
+		{"/pkg/net/html", "/pkg/net/html", true},
+		{"/pkg/net/http/httptest", "/pkg/net/http/httptest", true},
+		{"/pkg/nnn", "/pkg/nnn", true},
+		{"/pkg/nnnn", "/pkg/nnnn", true},
+		{"/pkg/nn", "/pkg/nn", true},
 
-		{"/pkg/1", I(18), true},
-		{"/pkg/1/", I(19), true},
-		{"/pkg/1/2", I(19), true},
-		{"/pkg/1/2/", I(17), true},
-		{"/pkg/1/2/3", I(17), true},
-		{"/pkg/1/2/3/4", I(17), true},
+		{"/pkg/1", "/pkg/:first", true},
+		{"/pkg/1/", "/pkg/:first/:second", true},
+		{"/pkg/1/2", "/pkg/:first/:second", true},
+		{"/pkg/1/2/", "/pkg/:first/:second/*rest", true},
+		{"/pkg/1/2/3", "/pkg/:first/:second/*rest", true},
+		{"/pkg/1/2/3/4", "/pkg/:first/:second/*rest", true},
 	}
 	for _, tt := range tests {
-		t.Run("", func(t *testing.T) {
-			gotV, gotReplace := tree._lookup(tt.path)
-			if gotV != tt.wantV {
-				t.Errorf("Tree.Lookup() gotV = %v, want %v", gotV, tt.wantV)
+		t.Run(fmt.Sprintf("%q(%v)", tt.path, tt.wantOK), func(t *testing.T) {
+			gotV, ok := tree._lookup(tt.path)
+			if ok != tt.wantOK {
+				t.Errorf("Tree.Lookup() gotOK = %v, want %v", ok, tt.wantOK)
 			}
-			if gotReplace != tt.wantReplace {
-				t.Errorf("Tree.Lookup() gotReplace = %v, want %v", gotReplace, tt.wantReplace)
+			if !ok {
+				if gotV != nil {
+					t.Errorf("Tree.Lookup() gotV != nil")
+				}
+				return
+			}
+			if got := fromFunc(gotV); got != tt.want {
+				t.Errorf("Tree.Lookup() got = %v, want %v", got, tt.want)
 			}
 		})
 	}
 }
 
-// BenchmarkLookup/normal-4         	20000000	        82.9 ns/op
-// BenchmarkLookup/optimized-4      	20000000	        82.1 ns/op
+func TestTree_Lookup(t *testing.T) {
+	t.Run("non-optimized", func(t *testing.T) {
+		testTree_Lookup(t, false)
+	})
+	t.Run("optimized", func(t *testing.T) {
+		testTree_Lookup(t, true)
+	})
+}
+
+/*
+
+BenchmarkLookup/optimized-4         	30000000	        40.9 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        42.0 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        41.3 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        41.9 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        41.5 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        41.7 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        41.3 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        41.6 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        41.5 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        41.8 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        41.4 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        42.3 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        41.5 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        42.1 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        41.6 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        41.8 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        40.9 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        42.1 ns/op
+
+BenchmarkLookup/optimized-4         	30000000	        41.4 ns/op
+BenchmarkLookup/non-optimized-4     	30000000	        41.8 ns/op
+
+*/
 func BenchmarkLookup(b *testing.B) {
-	tr := &Tree{}
-	tro := &Tree{}
+	tree := &Tree{}
+	tree_o := &Tree{}
 	ps := []string{
 		"",
 		"/src/",
@@ -165,34 +234,31 @@ func BenchmarkLookup(b *testing.B) {
 	}
 	f := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {})
 	for _, p := range ps {
-		tr.Add(p, Payload{f})
-		tro.Add(p, Payload{f})
+		tree.Add(p).Replace(f)
+		tree_o.Add(p).Replace(f)
 	}
-	tro.Optimize()
+	tree_o.Optimize()
 
 	bt, err := ioutil.ReadFile(filepath.Join("testdata", "url.log"))
 	if err != nil {
 		b.Fatal(err)
 	}
 	urls := strings.Split(string(bt), "\n")
-	b.Run("optimized", func(b *testing.B) {
+
+	test := func(b *testing.B, T *Tree) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			idx := i % len(urls)
-			v := tro.Lookup(urls[idx])
-			if v != nil && v.Handler != nil {
-				v.Handler.ServeHTTP(nil, nil)
+			v := T.Lookup(urls[idx])
+			if v != nil && v.HandlerFunc != nil {
+				v.HandlerFunc(nil, nil)
 			}
 		}
+	}
+	b.Run("optimized", func(b *testing.B) {
+		test(b, tree_o)
 	})
 	b.Run("non-optimized", func(b *testing.B) {
-		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
-			idx := i % len(urls)
-			v := tr.Lookup(urls[idx])
-			if v != nil && v.Handler != nil {
-				v.Handler.ServeHTTP(nil, nil)
-			}
-		}
+		test(b, tree)
 	})
 }

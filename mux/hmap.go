@@ -1,4 +1,4 @@
-package smux
+package mux
 
 import "github.com/fanyang01/httpx/internal/radix"
 

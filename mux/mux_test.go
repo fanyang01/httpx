@@ -1,4 +1,4 @@
-package smux_test
+package mux_test
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/fanyang01/httpx/smux"
+	"github.com/fanyang01/httpx/mux"
 )
 
 type H struct {
@@ -38,7 +38,7 @@ func TestMuxMethod(t *testing.T) {
 		{t, "PATCH", "/", 7, "/"},
 		{t, "DIY", "/", 8, "/"},
 	}
-	mux := smux.New()
+	mux := mux.New()
 	for _, tt := range tests {
 		mux.Handle(tt.method, tt.pattern, tt)
 	}

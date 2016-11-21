@@ -1,4 +1,4 @@
-package smux
+package mux
 
 import (
 	"net/http"

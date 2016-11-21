@@ -8,15 +8,15 @@ import (
 	"strings"
 )
 
-type Payload struct {
-	Handler http.Handler
+type payload struct {
+	HandlerFunc http.HandlerFunc
 }
 
 type Node struct {
 	path     string
 	index    string
 	children []Node
-	Payload
+	payload
 }
 
 type Tree struct {
@@ -31,14 +31,7 @@ func firstbyte(dir string) byte {
 }
 
 func newNode(path string) Node {
-	var node Node
-	node.setPath(path)
-	return node
-}
-
-func (node *Node) setPath(path string) *Node {
-	node.path = path
-	return node
+	return Node{path: path}
 }
 
 func (node *Node) captureNode() *Node {
@@ -102,9 +95,9 @@ func splitCompact(path string) (ss []string) {
 	return ss
 }
 
-func (t *Tree) Add(path string, v Payload) (old Payload, replace bool) {
+func (t *Tree) Add(path string) *Node {
 	ss := strings.Split(path, "/")
-	return t.root.insert(ss, v)
+	return t.root.insert(ss)
 }
 
 func commonPrefix(p1, p2 []string) (i int) {
@@ -114,15 +107,14 @@ func commonPrefix(p1, p2 []string) (i int) {
 	return i
 }
 
-func (node *Node) replace(v Payload) (old Payload, replace bool) {
-	old, replace = node.Payload, node.Handler != nil
-	node.Payload = v
-	node.setPath(node.path) // For root node
-	return old, replace
+func (node *Node) Replace(h http.HandlerFunc) (oh http.HandlerFunc, replaced bool) {
+	oh, replaced = node.HandlerFunc, node.HandlerFunc != nil
+	node.HandlerFunc = h
+	return oh, replaced
 }
 
 // Invariant: strings.SplitN(node.dir, "/", 2)[0] == newpath[0]
-func (node *Node) insert(newpath []string, v Payload) (old Payload, replace bool) {
+func (node *Node) insert(newpath []string) *Node {
 	var (
 		path = strings.Split(node.path, "/")
 		n    = commonPrefix(path, newpath)
@@ -136,14 +128,14 @@ func (node *Node) insert(newpath []string, v Payload) (old Payload, replace bool
 		node.append(child)
 
 		if n == len(newpath) {
-			return node.replace(v)
+			return node
 		}
 		return node.appendSplit(
 			strings.Join(newpath[n:], "/"),
-		).replace(v)
+		)
 
 	case n == len(newpath): // Match current node
-		return node.replace(v)
+		return node
 	}
 
 	// Try to go deeper
@@ -156,7 +148,7 @@ func (node *Node) insert(newpath []string, v Payload) (old Payload, replace bool
 	)
 	for ; i >= 0; i = strings.IndexByte(index, b) {
 		if next := &children[i]; strings.SplitN(next.path, "/", 2)[0] == dir {
-			return next.insert(newpath[n:], v)
+			return next.insert(newpath[n:])
 		}
 		if b == ':' || b == '*' {
 			panic(fmt.Errorf(
@@ -175,9 +167,7 @@ func (node *Node) insert(newpath []string, v Payload) (old Payload, replace bool
 	}
 
 	// Failed, append to the child list of current node
-	return node.appendSplit(
-		strings.Join(newpath[n:], "/"),
-	).replace(v)
+	return node.appendSplit(strings.Join(newpath[n:], "/"))
 }
 
 func (t *Tree) Lookup(path string) *Node {
@@ -205,13 +195,15 @@ OUTER:
 			for ; pos < min && child.path[pos] == path[pos]; pos++ {
 			}
 			switch {
-			case pos < len(child.path): // Not match
-				break
-			case pos == len(path): // Match
+			case pos < len(child.path):
+				// Not match
+			case pos == len(path):
+				// Match
 				return child
-			case path[pos] != '/': // Not match
-				break
-			default: // Go deeper
+			case path[pos] != '/':
+				// Not match
+			default:
+				// Go deeper
 				path = path[pos:]
 				node = child
 				continue OUTER
@@ -297,7 +289,7 @@ func (t *Tree) String() string {
 		tree.WriteByte('\n')
 
 		path := ""
-		if n.Handler != nil {
+		if n.HandlerFunc != nil {
 			for _, c := range ctx {
 				path += "/" + c.path
 			}
@@ -356,25 +348,6 @@ func (t *Tree) Optimize() {
 			}
 		}
 	}
-
-	// Move *param or :param to the end of children list
-	/*
-		breadthfirst(&t.root, func(n *Node) {
-			if n.icap <= 0 {
-				return
-			}
-			i := n.icap - 1
-			child := n.children[i]
-			copy(n.children[i:], n.children[i+1:])
-			n.children = n.children[:len(n.children)-1]
-			n.children = append(n.children, child)
-			n.icap = int32(len(n.children))
-			n.index = ""
-			for i := range n.children {
-				n.index += string(firstbyte(n.children[i].path))
-			}
-		})
-	*/
 
 	// Count the number of nodes
 	var count int
