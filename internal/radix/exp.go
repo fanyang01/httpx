@@ -10,10 +10,10 @@ func (node *Node) append_v0(c Node) *Node {
 	return &node.children[len(node.children)-1]
 }
 
-func (node *Node) insert_v0(ss []string, v payload) (old payload, replace bool) {
+func (node *Node) insert_v0(ss []string, v Payload) (old Payload, replace bool) {
 	if len(ss) == 0 {
-		old, replace = node.payload, node.payload.HandlerFunc != nil
-		node.payload = v
+		old, replace = node.Payload, node.Payload.HandlerFunc != nil
+		node.Payload = v
 		return old, replace
 	}
 	var (
@@ -67,14 +67,14 @@ OUTER:
 	return node
 }
 
-func (node *Node) replace_v1(v payload) (old payload, replace bool) {
-	old, replace = node.payload, node.HandlerFunc != nil
-	node.payload = v
+func (node *Node) replace_v1(v Payload) (old Payload, replace bool) {
+	old, replace = node.Payload, node.HandlerFunc != nil
+	node.Payload = v
 	return old, replace
 }
 
 // Invariant: strings.SplitN(node.dir, "/", 2)[0] == newpath[0]
-func (node *Node) insert_v1(newpath []string, v payload) (old payload, replace bool) {
+func (node *Node) insert_v1(newpath []string, v Payload) (old Payload, replace bool) {
 	var (
 		path = strings.Split(node.path, "/")
 		n    = commonPrefix(path, newpath)

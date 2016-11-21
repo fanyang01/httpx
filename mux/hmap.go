@@ -53,5 +53,5 @@ func (mux *Mux) tree(method string) *radix.Tree {
 			return &mux.hmap[i].Tree
 		}
 	}
-	return mux.extend[method]
+	return mux.extended[method]
 }

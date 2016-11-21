@@ -53,10 +53,7 @@ func concat(prefix, s string) string {
 
 func (g *Group) add(method, pattern string, h http.Handler) {
 	pattern = concat(g.prefix, pattern)
-	for i := len(g.middlewares) - 1; i >= 0; i-- {
-		h = g.middlewares[i].Wrap(h)
-	}
-	g.mux.add(method, pattern, h)
+	g.mux.add(method, pattern, h, g.middlewares...)
 }
 
 func (g *Group) Handle(method, pattern string, h http.Handler) {

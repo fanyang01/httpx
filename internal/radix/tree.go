@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-type payload struct {
+type Payload struct {
 	HandlerFunc http.HandlerFunc
 }
 
@@ -16,7 +16,28 @@ type Node struct {
 	path     string
 	index    string
 	children []Node
-	payload
+	Payload
+}
+
+type NodeType int
+
+const (
+	StaticNode NodeType = 1 + iota
+	MatchOneNode
+	MatchAllNode
+)
+
+func (n *Node) Type() NodeType {
+	switch {
+	case n.path == "":
+		return StaticNode
+	case n.path[0] == '*':
+		return MatchAllNode
+	case n.path[0] == ':':
+		return MatchOneNode
+	default:
+		return StaticNode
+	}
 }
 
 type Tree struct {
@@ -34,7 +55,7 @@ func newNode(path string) Node {
 	return Node{path: path}
 }
 
-func (node *Node) captureNode() *Node {
+func (node *Node) matchNode() *Node {
 	if i := len(node.index); special(node.index[i-1]) {
 		return &node.children[i-1]
 	}
@@ -95,9 +116,9 @@ func splitCompact(path string) (ss []string) {
 	return ss
 }
 
-func (t *Tree) Add(path string) *Node {
+func (t *Tree) Add(path string, f ...func(old, new *Node)) *Node {
 	ss := strings.Split(path, "/")
-	return t.root.insert(ss)
+	return t.root.insert(ss, f...)
 }
 
 func commonPrefix(p1, p2 []string) (i int) {
@@ -114,7 +135,7 @@ func (node *Node) Replace(h http.HandlerFunc) (oh http.HandlerFunc, replaced boo
 }
 
 // Invariant: strings.SplitN(node.dir, "/", 2)[0] == newpath[0]
-func (node *Node) insert(newpath []string) *Node {
+func (node *Node) insert(newpath []string, f ...func(old, new *Node)) *Node {
 	var (
 		path = strings.Split(node.path, "/")
 		n    = commonPrefix(path, newpath)
@@ -125,7 +146,10 @@ func (node *Node) insert(newpath []string) *Node {
 		child := *node
 		child.path = node.path[l+1:]
 		*node = newNode(node.path[:l])
-		node.append(child)
+		cn := node.append(child)
+		for _, fn := range f {
+			fn(node, cn)
+		}
 
 		if n == len(newpath) {
 			return node
@@ -159,10 +183,10 @@ func (node *Node) insert(newpath []string) *Node {
 		index, children = index[i+1:], children[i+1:]
 	}
 
-	if (b == ':' || b == '*') && node.captureNode() != nil {
+	if (b == ':' || b == '*') && node.matchNode() != nil {
 		panic(fmt.Errorf(
 			"radix: conflict parameter type: old=%q, new=%q",
-			node.captureNode().path, dir,
+			node.matchNode().path, dir,
 		))
 	}
 
@@ -326,7 +350,7 @@ func (t *Tree) String() string {
 	return result.String()
 }
 
-func (t *Tree) Optimize() {
+func (t *Tree) Optimize(f ...func(old, new *Node)) {
 	var depthfirst, breadthfirst func(*Node, func(*Node))
 
 	// NOTE: don't modify Node.children in function f.
@@ -359,7 +383,13 @@ func (t *Tree) Optimize() {
 		nodes = append(nodes, n.children...)
 	})
 	breadthfirst(&t.root, func(n *Node) {
+		old := n.children
 		n.children = nodes[:len(n.children)]
+		for i := range n.children {
+			for _, fn := range f {
+				fn(&old[i], &n.children[i])
+			}
+		}
 		nodes = nodes[len(n.children):]
 	})
 	if len(nodes) != 0 {
