@@ -8,35 +8,6 @@ import (
 	"strings"
 )
 
-type nodeType int32
-
-func (i nodeType) IsNotNil() bool { return i&nonNilNode != 0 }
-
-const (
-	nonNilNode nodeType = 1 << iota
-	staticNode
-	capOneNode
-	capAllNode
-	nodeTypeMask = staticNode | capOneNode | capAllNode
-)
-
-var nodeTypeName = map[nodeType]string{
-	0:                       "nil",
-	staticNode:              "nil|static",
-	capOneNode:              "nil|cap_one",
-	capAllNode:              "nil|cap_all",
-	nonNilNode | staticNode: "static",
-	nonNilNode | capOneNode: "cap_one",
-	nonNilNode | capAllNode: "cap_all",
-}
-
-func (i nodeType) String() string {
-	if s := nodeTypeName[i]; s != "" {
-		return s
-	}
-	return fmt.Sprintf("nodeType(%d)", i)
-}
-
 type Payload struct {
 	Handler http.Handler
 }
@@ -44,8 +15,6 @@ type Payload struct {
 type Node struct {
 	path     string
 	index    string
-	typ      nodeType
-	icap     int32 // index of the capture node(if exists) + 1
 	children []Node
 	Payload
 }
@@ -69,25 +38,30 @@ func newNode(path string) Node {
 
 func (node *Node) setPath(path string) *Node {
 	node.path = path
-	node.typ &= ^nodeTypeMask
-	switch firstbyte(path) {
-	case ':':
-		node.typ |= capOneNode
-	case '*':
-		node.typ |= capAllNode
-	default:
-		node.typ |= staticNode
-	}
 	return node
 }
 
-func (node *Node) append(c Node) *Node {
-	node.children = append(node.children, c)
-	b := firstbyte(c.path)
-	node.index = node.index + string(b)
-	if b == '*' || b == ':' {
-		node.icap = int32(len(node.index))
+func (node *Node) captureNode() *Node {
+	if i := len(node.index); special(node.index[i-1]) {
+		return &node.children[i-1]
 	}
+	return nil
+}
+
+func special(b byte) bool {
+	return b == '*' || b == ':'
+}
+
+func (node *Node) append(c Node) *Node {
+	if i := len(node.index) - 1; i >= 0 && special(node.index[i]) {
+		last := node.children[i]
+		node.index, node.children = node.index[:i], node.children[:i]
+		node.append(c)
+		node.append(last)
+		return &node.children[len(node.children)-2]
+	}
+	node.children = append(node.children, c)
+	node.index = node.index + string(firstbyte(c.path))
 	return &node.children[len(node.children)-1]
 }
 
@@ -95,7 +69,7 @@ func (node *Node) appendSplit(path string) *Node {
 	ss := splitCompact(path)
 	for i, s := range ss {
 		child := newNode(s)
-		if child.typ&capAllNode != 0 && i != len(ss)-1 {
+		if firstbyte(child.path) == '*' && i != len(ss)-1 {
 			panic(fmt.Errorf(
 				"radix: invalid pattern %q: capture-all can't be followed by path",
 				strings.Join(ss[i:], "/"),
@@ -141,10 +115,9 @@ func commonPrefix(p1, p2 []string) (i int) {
 }
 
 func (node *Node) replace(v Payload) (old Payload, replace bool) {
-	old, replace = node.Payload, node.typ.IsNotNil()
+	old, replace = node.Payload, node.Handler != nil
 	node.Payload = v
 	node.setPath(node.path) // For root node
-	node.typ |= nonNilNode
 	return old, replace
 }
 
@@ -194,10 +167,10 @@ func (node *Node) insert(newpath []string, v Payload) (old Payload, replace bool
 		index, children = index[i+1:], children[i+1:]
 	}
 
-	if (b == ':' || b == '*') && node.icap > 0 {
+	if (b == ':' || b == '*') && node.captureNode() != nil {
 		panic(fmt.Errorf(
 			"radix: conflict parameter type: old=%q, new=%q",
-			node.children[node.icap-1].path, dir,
+			node.captureNode().path, dir,
 		))
 	}
 
@@ -246,19 +219,19 @@ OUTER:
 			index, children = index[i+1:], children[i+1:]
 		}
 
-		if icap := node.icap - 1; icap >= 0 {
-			switch node.index[icap] {
+		if l := len(node.index) - 1; l >= 0 {
+			switch node.index[l] {
 			case ':':
 				pos := strings.IndexByte(path, '/')
 				if pos < 0 {
 					pos = len(path)
 				}
 				path = path[pos:]
-				node = &node.children[icap]
+				node = &node.children[l]
 				continue OUTER
 			case '*':
 				path = path[len(path):]
-				node = &node.children[icap]
+				node = &node.children[l]
 				continue OUTER
 			}
 		}
@@ -270,8 +243,8 @@ OUTER:
 
 func (node *Node) String() string {
 	return fmt.Sprintf(
-		"Node{dir: %q, #child: %d, index: %q, type: %s}",
-		node.path, len(node.children), string(node.index), node.typ,
+		"Node{dir: %q, #child: %d, index: %q}",
+		node.path, len(node.children), string(node.index),
 	)
 }
 
@@ -324,7 +297,7 @@ func (t *Tree) String() string {
 		tree.WriteByte('\n')
 
 		path := ""
-		if n.typ&nonNilNode != 0 {
+		if n.Handler != nil {
 			for _, c := range ctx {
 				path += "/" + c.path
 			}
@@ -385,21 +358,23 @@ func (t *Tree) Optimize() {
 	}
 
 	// Move *param or :param to the end of children list
-	breadthfirst(&t.root, func(n *Node) {
-		if n.icap <= 0 {
-			return
-		}
-		i := n.icap - 1
-		child := n.children[i]
-		copy(n.children[i:], n.children[i+1:])
-		n.children = n.children[:len(n.children)-1]
-		n.children = append(n.children, child)
-		n.icap = int32(len(n.children))
-		n.index = ""
-		for i := range n.children {
-			n.index += string(firstbyte(n.children[i].path))
-		}
-	})
+	/*
+		breadthfirst(&t.root, func(n *Node) {
+			if n.icap <= 0 {
+				return
+			}
+			i := n.icap - 1
+			child := n.children[i]
+			copy(n.children[i:], n.children[i+1:])
+			n.children = n.children[:len(n.children)-1]
+			n.children = append(n.children, child)
+			n.icap = int32(len(n.children))
+			n.index = ""
+			for i := range n.children {
+				n.index += string(firstbyte(n.children[i].path))
+			}
+		})
+	*/
 
 	// Count the number of nodes
 	var count int

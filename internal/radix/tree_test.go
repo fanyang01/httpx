@@ -3,7 +3,6 @@ package radix
 import (
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -69,7 +68,7 @@ func TestTree_Add(t *testing.T) {
 
 func (t *Tree) _lookup(path string) (v http.Handler, ok bool) {
 	node := t.Lookup(path)
-	if node == nil || !node.typ.IsNotNil() {
+	if node == nil || node.Handler == nil {
 		return nil, false
 	}
 	return node.Handler, true
@@ -176,21 +175,21 @@ func BenchmarkLookup(b *testing.B) {
 		b.Fatal(err)
 	}
 	urls := strings.Split(string(bt), "\n")
-	b.Run("normal", func(b *testing.B) {
+	b.Run("optimized", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			idx := rand.Intn(len(urls))
-			v := tr.Lookup(urls[idx])
+			idx := i % len(urls)
+			v := tro.Lookup(urls[idx])
 			if v != nil && v.Handler != nil {
 				v.Handler.ServeHTTP(nil, nil)
 			}
 		}
 	})
-	b.Run("optimized", func(b *testing.B) {
+	b.Run("non-optimized", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			idx := rand.Intn(len(urls))
-			v := tro.Lookup(urls[idx])
+			idx := i % len(urls)
+			v := tr.Lookup(urls[idx])
 			if v != nil && v.Handler != nil {
 				v.Handler.ServeHTTP(nil, nil)
 			}

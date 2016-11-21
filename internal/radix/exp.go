@@ -12,9 +12,8 @@ func (node *Node) append_v0(c Node) *Node {
 
 func (node *Node) insert_v0(ss []string, v Payload) (old Payload, replace bool) {
 	if len(ss) == 0 {
-		old, replace = node.Payload, node.typ.IsNotNil()
+		old, replace = node.Payload, node.Payload.Handler != nil
 		node.Payload = v
-		node.typ = staticNode | nonNilNode
 		return old, replace
 	}
 	var (
@@ -32,7 +31,6 @@ func (node *Node) insert_v0(ss []string, v Payload) (old Payload, replace bool) 
 	}
 	next := node.append_v0(Node{
 		path: dir,
-		typ:  staticNode,
 	})
 	return next.insert_v0(ss[1:], v)
 }
@@ -82,7 +80,6 @@ func (node *Node) insert_v1(newpath []string, v Payload) (old Payload, replace b
 		child.path = node.path[l+1:]
 		*node = Node{
 			path: node.path[:l],
-			typ:  staticNode,
 		}
 		node.append_v0(child)
 
